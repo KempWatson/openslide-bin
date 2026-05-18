@@ -23,8 +23,9 @@ jobs:
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
             -w /work \
+            -e GIT_CONFIG_GLOBAL=/tmp/gitconfig \
             ghcr.io/openslide/winbuild-builder \
-            ./bintool bdist
+            bash -c "git config --global --add safe.directory '*' && ./bintool bdist"            
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
