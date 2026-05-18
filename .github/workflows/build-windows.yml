@@ -1,0 +1,38 @@
+name: Build OpenSlide Windows (DICOM Concatenation)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute hash and update wrap file
+        run: |
+          URL="https://github.com/KempWatson/openslide/archive/refs/heads/concat-on-main.tar.gz"
+          curl -fL -o /tmp/openslide.tar.gz "$URL"
+          HASH=$(sha256sum /tmp/openslide.tar.gz | cut -d' ' -f1)
+          DIR=$(tar tzf /tmp/openslide.tar.gz | head -1 | cut -d'/' -f1)
+          echo "Source dir: $DIR"
+          echo "SHA256: $HASH"
+          sed -i "s|^source_hash = .*|source_hash = $HASH|" subprojects/openslide.wrap
+          sed -i "s|^directory = .*|directory = $DIR|" subprojects/openslide.wrap
+          cat subprojects/openslide.wrap
+
+      - name: Build Windows binaries
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -w /work \
+            ghcr.io/openslide/winbuild-builder \
+            ./bintool bdist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openslide-win64-concatenation
+          path: "*.zip"
+          retention-days: 90
