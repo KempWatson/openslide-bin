@@ -1,8 +1,0 @@
-[wrap-file]
-directory = openslide-concat-on-main
-source_url = https://github.com/KempWatson/openslide/archive/refs/heads/concat-on-main.tar.gz
-source_filename = openslide-concat-on-main.tar.gz
-source_hash = PLACEHOLDER
-
-[provide]
-dependency_names = openslide
