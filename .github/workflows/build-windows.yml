@@ -15,8 +15,12 @@ jobs:
           git clone --depth 1 --branch concat-on-main \
             https://github.com/KempWatson/openslide.git \
             subprojects/openslide
-          echo "=== Confirming override directory exists ==="
-          ls -la subprojects/openslide | head -20
+          ls -la subprojects/openslide | head -10
+
+      - name: Force dev_deps mode in bintool
+        run: |
+          sed -i "s|dev_deps = openslide.override_path.is_dir()|dev_deps = True|" bintool
+          grep -n "dev_deps = " bintool | head -5
 
       - name: Build Windows binaries
         run: |
@@ -25,7 +29,7 @@ jobs:
             -w /work \
             -e GIT_CONFIG_GLOBAL=/tmp/gitconfig \
             ghcr.io/openslide/winbuild-builder \
-            bash -c "git config --global --add safe.directory '*' && ./bintool bdist"            
+            bash -c "git config --global --add safe.directory '*' && ./bintool bdist"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
