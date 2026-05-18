@@ -10,17 +10,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Compute hash and update wrap file
+      - name: Clone OpenSlide source as override
         run: |
-          URL="https://github.com/KempWatson/openslide/archive/refs/heads/concat-on-main.tar.gz"
-          curl -fL -o /tmp/openslide.tar.gz "$URL"
-          HASH=$(sha256sum /tmp/openslide.tar.gz | cut -d' ' -f1)
-          DIR=$(tar tzf /tmp/openslide.tar.gz | head -1 | cut -d'/' -f1)
-          echo "Source dir: $DIR"
-          echo "SHA256: $HASH"
-          sed -i "s|^source_hash = .*|source_hash = $HASH|" subprojects/openslide.wrap
-          sed -i "s|^directory = .*|directory = $DIR|" subprojects/openslide.wrap
-          cat subprojects/openslide.wrap
+          git clone --depth 1 --branch concat-on-main \
+            https://github.com/KempWatson/openslide.git \
+            subprojects/openslide
+          echo "=== Confirming override directory exists ==="
+          ls -la subprojects/openslide | head -20
 
       - name: Build Windows binaries
         run: |
