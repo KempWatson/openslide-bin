@@ -14,7 +14,8 @@ jobs:
         run: |
           brew update
           brew install meson ninja pkg-config nasm
-
+          python3 -m pip install --break-system-packages license_expression
+          
       - name: Clone OpenSlide source as override
         run: |
           git clone --depth 1 --branch concat-on-main \
