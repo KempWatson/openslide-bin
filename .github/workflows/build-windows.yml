@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Clone OpenSlide source as override
         run: |
@@ -32,8 +32,8 @@ jobs:
             bash -c "git config --global --add safe.directory '*' && ./bintool bdist"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: openslide-win64-concatenation
           path: "*.zip"
-          retention-days: 90
+          retention-days: 30
