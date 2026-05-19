@@ -1,0 +1,132 @@
+name: Build OpenSlide Alpine/musl Linux (DICOM concatenation, Zeiss patches, Roche tile direction)
+
+on:
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'Architecture to build'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - x86_64
+          - aarch64
+          - both
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Skip if not selected
+        if: ${{ github.event.inputs.arch != 'both' && github.event.inputs.arch != matrix.arch }}
+        run: |
+          echo "Skipping ${{ matrix.arch }} build"
+          exit 0
+
+      - name: Clone OpenSlide source
+        run: |
+          git clone --depth 1 --branch concat-on-main \
+            https://github.com/KempWatson/openslide.git \
+            openslide-src
+
+      - name: Apply Zeiss CZI improvements (Phase 1 — without libjxr decode)
+        run: |
+          curl -fL -o /tmp/zeiss-czi.patch \
+            "https://github.com/girder/large_image_wheels/raw/refs/heads/master/openslide-iewchen-zeiss-czi-jxr.patch"
+
+          cd openslide-src
+          patch -p1 --no-backup-if-mismatch < /tmp/zeiss-czi.patch || \
+            echo "Some test-fixture hunks may have been rejected; continuing"
+
+          python3 << 'PYEOF'
+          path = 'src/openslide-vendor-zeiss.c'
+          with open(path) as f:
+              s = f.read()
+          before = "  case COMP_ZSTD1:\n  case COMP_JXR:\n    break;"
+          after  = "  case COMP_ZSTD1:\n#ifdef HAVE_LIBJXR\n  case COMP_JXR:\n#endif\n    break;"
+          if before in s:
+              s = s.replace(before, after)
+              with open(path, 'w') as f:
+                  f.write(s)
+              print('Gated COMP_JXR validation case behind HAVE_LIBJXR')
+          PYEOF
+
+          # Verify the critical changes landed
+          missing=0
+          for f in src/openslide-image.c src/openslide-image.h \
+                   src/openslide-decode-jxr.c src/openslide-decode-jxr.h; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: $f was not created"
+              missing=1
+            fi
+          done
+          if ! grep -q "dir_entry_len" src/openslide-vendor-zeiss.c; then
+            echo "ERROR: dir_entry_len changes not applied"
+            missing=1
+          fi
+          if [ "$missing" -eq 1 ]; then exit 1; fi
+          echo "=== Patch hunks verified ==="
+
+      - name: Compute version hash
+        id: version
+        run: |
+          cd openslide-src
+          echo "hash=$(git rev-parse HEAD | cut -c1-7)" >> "$GITHUB_OUTPUT"
+
+      - name: Build in Alpine container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -w /work \
+            -e VERSION_HASH="${{ steps.version.outputs.hash }}" \
+            -e ARCH="${{ matrix.arch }}" \
+            alpine:3.20 \
+            sh -ec '
+              echo "=== Installing required build dependencies ==="
+              apk add --no-cache \
+                build-base meson ninja pkgconf git curl \
+                cairo-dev glib-dev libjpeg-turbo-dev libpng-dev \
+                tiff-dev libxml2-dev openjpeg-dev sqlite-dev \
+                zlib-dev zstd-dev
+
+              echo "=== Optional libdicom-dev (will fall back to subproject if missing) ==="
+              apk add --no-cache libdicom-dev 2>/dev/null || \
+                echo "libdicom-dev not in Alpine repos; OpenSlide will build it as a subproject"
+
+              echo "=== Building OpenSlide ==="
+              cd /work/openslide-src
+              git config --global --add safe.directory "*"
+
+              meson setup builddir \
+                --buildtype=release \
+                --prefix=/tmp/install \
+                -Dversion_suffix=objective+${VERSION_HASH}
+
+              meson compile -C builddir
+              meson install -C builddir
+
+              echo "=== Verifying build output ==="
+              ls -la /tmp/install/lib/libopenslide* /tmp/install/include/openslide/
+
+              echo "=== Packaging ==="
+              cd /tmp/install
+              tar czf /work/openslide-alpine-musl-${ARCH}.tar.gz lib include bin 2>/dev/null || \
+                tar czf /work/openslide-alpine-musl-${ARCH}.tar.gz lib include
+
+              ls -la /work/openslide-alpine-musl-*.tar.gz
+            '
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: openslide-alpine-musl-${{ matrix.arch }}-concatenation
+          path: "openslide-alpine-musl-*.tar.gz"
+          retention-days: 90
