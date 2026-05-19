@@ -1,4 +1,4 @@
-name: Build OpenSlide Windows (DICOM Concatenation)
+name: Build OpenSlide Windows (DICOM concatenation, Zeiss patches, Roche tile direction)
 
 on:
   workflow_dispatch:
