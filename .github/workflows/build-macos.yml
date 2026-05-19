@@ -68,29 +68,20 @@ jobs:
 
       - name: Set custom version suffix
         run: |
-          python3 - <<'PYEOF'
+          python3 <<'PYEOF'
           with open('bintool', 'r') as f:
               s = f.read()
-          old = """version_suffix = (
-            subprocess.check_output(
-                ['git', 'rev-parse', 'HEAD'], cwd=openslide.source_dir
-            ).decode()[:7]
-            if (openslide.source_dir / '.git').exists()
-            else ''
-        )"""
-          new = """_hash = (
-            subprocess.check_output(
-                ['git', 'rev-parse', 'HEAD'], cwd=openslide.source_dir
-            ).decode()[:7]
-            if (openslide.source_dir / '.git').exists()
-            else 'unknown'
-        )
-          version_suffix = f'objective+{_hash}'"""
-          s = s.replace(old, new)
-          with open('bintool', 'w') as f:
-              f.write(s)
-          print('Version suffix patched.')
+          marker = "args.append(f'-Dopenslide:version_suffix={version_suffix}')"
+          replacement = "version_suffix = f'objective+{version_suffix}'\n        " + marker
+          if marker in s and 'objective+' not in s:
+              s = s.replace(marker, replacement, 1)
+              with open('bintool', 'w') as f:
+                  f.write(s)
+              print('Version suffix wrapped with objective+ prefix')
+          else:
+              print('Skipped (already patched or marker not found)')
           PYEOF
+          grep -n 'objective' bintool || true
 
       - name: Build macOS Universal binary
         run: ./bintool bdist
