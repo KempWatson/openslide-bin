@@ -17,6 +17,56 @@ jobs:
             subprojects/openslide
           ls -la subprojects/openslide | head -10
 
+      - name: Apply Zeiss CZI improvements (Phase 1 — without libjxr decode)
+        run: |
+          curl -fL -o /tmp/zeiss-czi.patch \
+            "https://github.com/girder/large_image_wheels/raw/refs/heads/master/openslide-iewchen-zeiss-czi-jxr.patch"
+
+          cd subprojects/openslide
+          # Test fixture hunks will fail (we don't have the .czi files); that's fine.
+          patch -p1 --no-backup-if-mismatch < /tmp/zeiss-czi.patch || \
+            echo "Some test-fixture hunks may have been rejected; continuing"
+
+          # Gate the validation-side COMP_JXR case so JXR-compressed CZIs
+          # fail validation cleanly when libjxr isn't available, rather than
+          # passing validation then crashing at tile read.
+          python3 << 'PYEOF'
+          path = 'src/openslide-vendor-zeiss.c'
+          with open(path) as f:
+              s = f.read()
+          before = "  case COMP_ZSTD1:\n  case COMP_JXR:\n    break;"
+          after  = "  case COMP_ZSTD1:\n#ifdef HAVE_LIBJXR\n  case COMP_JXR:\n#endif\n    break;"
+          if before in s:
+              s = s.replace(before, after)
+              with open(path, 'w') as f:
+                  f.write(s)
+              print('Gated COMP_JXR validation case behind HAVE_LIBJXR')
+          else:
+              print('NOTE: COMP_JXR validation pattern not found — patch may have changed')
+          PYEOF
+
+          # Verify the critical changes landed
+          missing=0
+          for f in src/openslide-image.c src/openslide-image.h \
+                   src/openslide-decode-jxr.c src/openslide-decode-jxr.h; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: $f was not created"
+              missing=1
+            fi
+          done
+          if ! grep -q "dir_entry_len" src/openslide-vendor-zeiss.c; then
+            echo "ERROR: dir_entry_len changes not applied to openslide-vendor-zeiss.c"
+            missing=1
+          fi
+          if ! grep -q "parse_zen_version" src/openslide-vendor-zeiss.c; then
+            echo "ERROR: parse_zen_version not applied"
+            missing=1
+          fi
+          if [ "$missing" -eq 1 ]; then
+            exit 1
+          fi
+          echo "=== All critical patch hunks verified ==="
+          
       - name: Force dev_deps mode in bintool
         run: |
           sed -i "s|dev_deps = openslide.override_path.is_dir()|dev_deps = True|" bintool
