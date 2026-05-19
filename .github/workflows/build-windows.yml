@@ -72,6 +72,23 @@ jobs:
           sed -i "s|dev_deps = openslide.override_path.is_dir()|dev_deps = True|" bintool
           grep -n "dev_deps = " bintool | head -5
 
+      - name: Set custom version suffix
+        run: |
+          python3 <<'PYEOF'
+          with open('bintool', 'r') as f:
+              s = f.read()
+          marker = "args.append(f'-Dopenslide:version_suffix={version_suffix}')"
+          replacement = "version_suffix = f'objective+{version_suffix}'\n        " + marker
+          if marker in s and 'objective+' not in s:
+              s = s.replace(marker, replacement, 1)
+              with open('bintool', 'w') as f:
+                  f.write(s)
+              print('Version suffix wrapped with objective+ prefix')
+          else:
+              print('Skipped (already patched or marker not found)')
+          PYEOF
+          grep -n 'objective' bintool || true
+
       - name: Build Windows binaries
         run: |
           docker run --rm \
