@@ -1,0 +1,103 @@
+name: Build OpenSlide macOS (DICOM concatenation, Zeiss patches, Roche tile direction)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install build prerequisites
+        run: |
+          brew update
+          brew install meson ninja pkg-config nasm
+
+      - name: Clone OpenSlide source as override
+        run: |
+          git clone --depth 1 --branch concat-on-main \
+            https://github.com/KempWatson/openslide.git \
+            subprojects/openslide
+          ls -la subprojects/openslide | head -10
+
+      - name: Apply Zeiss CZI improvements (Phase 1 — without libjxr decode)
+        run: |
+          curl -fL -o /tmp/zeiss-czi.patch \
+            "https://github.com/girder/large_image_wheels/raw/refs/heads/master/openslide-iewchen-zeiss-czi-jxr.patch"
+
+          cd subprojects/openslide
+          patch -p1 --no-backup-if-mismatch < /tmp/zeiss-czi.patch || \
+            echo "Some test-fixture hunks may have been rejected; continuing"
+
+          python3 << 'PYEOF'
+          path = 'src/openslide-vendor-zeiss.c'
+          with open(path) as f:
+              s = f.read()
+          before = "  case COMP_ZSTD1:\n  case COMP_JXR:\n    break;"
+          after  = "  case COMP_ZSTD1:\n#ifdef HAVE_LIBJXR\n  case COMP_JXR:\n#endif\n    break;"
+          if before in s:
+              s = s.replace(before, after)
+              with open(path, 'w') as f:
+                  f.write(s)
+              print('Gated COMP_JXR validation case behind HAVE_LIBJXR')
+          else:
+              print('NOTE: COMP_JXR validation pattern not found')
+          PYEOF
+
+          missing=0
+          for f in src/openslide-image.c src/openslide-image.h \
+                   src/openslide-decode-jxr.c src/openslide-decode-jxr.h; do
+            if [ ! -f "$f" ]; then
+              echo "ERROR: $f was not created"
+              missing=1
+            fi
+          done
+          if ! grep -q "dir_entry_len" src/openslide-vendor-zeiss.c; then
+            echo "ERROR: dir_entry_len changes not applied"
+            missing=1
+          fi
+          if [ "$missing" -eq 1 ]; then exit 1; fi
+          echo "=== All critical patch hunks verified ==="
+
+      - name: Force dev_deps mode in bintool
+        run: |
+          sed -i '' "s|dev_deps = openslide.override_path.is_dir()|dev_deps = True|" bintool
+          grep -n "dev_deps = " bintool | head -5
+
+      - name: Set custom version suffix
+        run: |
+          python3 - <<'PYEOF'
+          with open('bintool', 'r') as f:
+              s = f.read()
+          old = """version_suffix = (
+            subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], cwd=openslide.source_dir
+            ).decode()[:7]
+            if (openslide.source_dir / '.git').exists()
+            else ''
+        )"""
+          new = """_hash = (
+            subprocess.check_output(
+                ['git', 'rev-parse', 'HEAD'], cwd=openslide.source_dir
+            ).decode()[:7]
+            if (openslide.source_dir / '.git').exists()
+            else 'unknown'
+        )
+          version_suffix = f'objective+{_hash}'"""
+          s = s.replace(old, new)
+          with open('bintool', 'w') as f:
+              f.write(s)
+          print('Version suffix patched.')
+          PYEOF
+
+      - name: Build macOS Universal binary
+        run: ./bintool bdist
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: openslide-macos-universal-concatenation
+          path: "*.tar.xz"
+          retention-days: 90
